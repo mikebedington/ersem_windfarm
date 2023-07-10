@@ -16,17 +16,19 @@ module ersem_bacteria_docdyn
       ! Variables
       type (type_state_variable_id) :: id_O3c, id_O2o, id_TA, id_N3n
       type (type_state_variable_id) :: id_R1c, id_R2c, id_R3c
+      type (type_state_variable_id) :: id_RS6c
       type (type_state_variable_id) :: id_R1p
       type (type_state_variable_id) :: id_R1n
       type (type_state_variable_id) :: id_N1p,id_N4n,id_N7f,id_N6
       type (type_dependency_id)     :: id_ETW,id_eO2mO2
       type (type_state_variable_id),allocatable,dimension(:) :: id_RPc,id_RPp,id_RPn,id_RPf
       type (type_model_id),         allocatable,dimension(:) :: id_RP
+      type (type_state_variable_id) :: id_RS6
 
       type (type_diagnostic_variable_id) :: id_fB1O3c, id_fB1NIn, id_fB1N1p,id_bgeff,id_fdenit,id_fanox,id_freox
 
       type (type_diagnostic_variable_id) :: id_fR1B1c, id_fR2B1c, id_fR3B1c,id_fRPB1c,id_fB1R1c, id_fB1R2c, id_fB1R3c
-      type (type_diagnostic_variable_id) :: id_fR1B1n,id_fB1R1n,id_fR1B1p,id_fB1R1p,id_fRPB1n,id_fRPB1p
+      type (type_diagnostic_variable_id) :: id_fR1B1n,id_fB1R1n,id_fR1B1p,id_fB1R1p,id_fRPB1n,id_fRPB1p,id_fRS6B1c
       type (type_diagnostic_variable_id) :: id_minn,id_minp
       ! Parameters
       integer  :: nRP
@@ -42,6 +44,7 @@ module ersem_bacteria_docdyn
       real(rk),allocatable :: sRPR1(:)
       real(rk) :: frB1R3
       real(rk) :: DeniX,reoX,omroX,omonX,chN3oX
+      real(rk) :: rRS6B1X
       integer  :: denit
 
       ! Remineralization
@@ -153,6 +156,9 @@ contains
          end if
       end do
 
+      ! Register links to resuspended POC
+      call self%register_state_dependency(self%id_RS6c,'RS6c','mg C/m^3','resuspended POC')
+
       ! Register links to semi-refractory dissolved organic matter pool.
       call self%register_state_dependency(self%id_R3c,'R3c','mg C/m^3','semi-refractory DOC')
 
@@ -164,6 +170,7 @@ contains
 
       call self%get_parameter(self%rR2B1X,'rR2','-','fraction of semi-labile DOC available to bacteria')
       call self%get_parameter(self%rR3B1X,'rR3','-','fraction of semi-refractory DOC available to bacteria')
+      call self%get_parameter(self%rRS6B1X,'rRS6', '-', 'fraction of resuspended POC available to bacteria')
       call self%get_parameter(self%frB1R3,'frR3','-','fraction of activity respiration converted to semi-refractory DOC')
 
       ! Register links to external total dissolved inorganic carbon, dissolved oxygen pools
@@ -193,6 +200,7 @@ contains
       call self%register_diagnostic_variable(self%id_fRPB1c,'fRPB1c','mg C/m^3/d','total uptake of POC')
       call self%register_diagnostic_variable(self%id_fRPB1n,'fRPB1n','mg N/m^3/d','total uptake of PON')
       call self%register_diagnostic_variable(self%id_fRPB1p,'fRPB1p','mg P/m^3/d','total uptake of POP')
+      call self%register_diagnostic_variable(self%id_fRS6B1c,'fRS6B1c','mg C/m^3/d','total uptake of resuspended POC')
       call self%register_diagnostic_variable(self%id_fR1B1n,'fR1B1n','mmol N/m^3/d','uptake of DON')
       call self%register_diagnostic_variable(self%id_fR1B1p,'fR1B1p','mmol P/m^3/d','uptake of DOP')
 
@@ -209,14 +217,14 @@ contains
       real(rk) :: ETW,eO2mO2
       real(rk) :: B1c,B1n,B1p
       real(rk) :: B1cP,B1nP,B1pP
-      real(rk) :: N1pP,N4nP,R1c,R1cP,R1pP,R1nP,R2c,N3n,N6,O2o
+      real(rk) :: N1pP,N4nP,R1c,R1cP,R1pP,R1nP,R2c,N3n,N6,O2o,RS6c,RS6cP
       real(rk) :: qpB1c,qnB1c
       real(rk) :: etB1,eO2B1
       real(rk) :: sB1RD,sutB1,rumB1,sugB1,rugB1,rraB1,fB1O3c
       real(rk) :: sB1R2,fB1R2c,fB1R3c,fB1RDc
       real(rk) :: netb1,bgeff
       real(rk) :: fB1N1p,fR1B1p,fB1RDp
-      real(rk) :: fB1NIn,fR1B1n,fB1RDn
+      real(rk) :: fB1NIn,fR1B1n,fB1RDn,fRS6B1c
       real(rk) :: R3c,R2cP,R3cP
       real(rk) :: fB1R1c
       real(rk) :: totsubst
@@ -247,6 +255,9 @@ contains
          _GET_(self%id_R1c,R1cP)
          _GET_(self%id_R1p,R1pP)
          _GET_(self%id_R1n,R1nP)
+
+         _GET_WITH_BACKGROUND_(self%id_RS6c,RS6c)
+         _GET_(self%id_RS6c,RS6cP)
 
          _GET_WITH_BACKGROUND_(self%id_R3c,R3c)
          _GET_(self%id_R2c,R2cP)
@@ -296,7 +307,7 @@ contains
       ! rugB1 = MIN(rumB1,rutB1)
       ! specific in substrate concentration:
 
-      totsubst = R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X+sum(RPcP*self%sRPR1/sutB1)
+      totsubst = R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X+sum(RPcP*self%sRPR1/sutB1)+RS6cP*self%rRS6B1X/sutB1
       ! Jorn: check whether total substrate>0 to prevent NaNs
       if (totsubst>0.0_rk) then
          sugB1 = rumB1/max(rumB1/sutB1,totsubst)
@@ -305,7 +316,11 @@ contains
       end if
             ! = MIN(rumB1,rutB1)=MIN(rumB1/(R1cP+R2cP*rR2B1X,sutB1) avoid pot. div. by 0
       fRPB1c = sugB1*RPcP*self%sRPR1/sutB1
-      rugB1 = sugB1*(R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X)+sum(fRPB1c)
+      fRS6B1c = sugB1*RS6cP*self%rRS6B1X/sutB1
+      rugB1 = sugB1*(R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X)+sum(fRPB1c)+fRS6B1c
+
+!  totsubst = R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X+T1cP*self%rT1B1X+T2cP*self%rT2B1X+sum(RPcP*self%sRPR1/sutB1)
+!  rugB1 = sugB1*(R1cP+R2cP*self%rR2B1X+R3cP*self%rR3B1X+T1cP*self%rT1B1X+T2cP*self%rT2B1X+sum(RPcP*self%sRPR1/sutB1))
 
 !..Respiration :
 
@@ -367,13 +382,15 @@ contains
          _SET_DIAGNOSTIC_(self%id_fB1R3c, fB1R3c)
          _SET_DIAGNOSTIC_(self%id_fR1B1c, sugB1*R1cP)
          _SET_DIAGNOSTIC_(self%id_fRPB1c, sum(fRPB1c))
+         _SET_DIAGNOSTIC_(self%id_fRS6B1c, fRS6B1c)
          _SET_DIAGNOSTIC_(self%id_fR2B1c, sugB1*R2cP*self%rR2B1X)
          _SET_DIAGNOSTIC_(self%id_fR3B1c, sugB1*R3cP*self%rR3B1X)
 
          do iRP=1,self%nRP
             _SET_ODE_(self%id_RPc(iRP), -fRPB1c(iRP))
          end do
-
+ 
+         _SET_ODE_(self%id_RS6c, -fRS6B1c)
          _SET_ODE_(self%id_O3c,+ fB1O3c/CMass)
 
 !..oxygen consumption.....................................................
