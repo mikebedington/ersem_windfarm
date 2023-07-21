@@ -47,6 +47,7 @@ module ersem_shared
    type (type_horizontal_standard_variable),parameter :: pelagic_benthic_transfer_constant = type_horizontal_standard_variable(name='pelagic_benthic_transfer_constant',units='d/m')
    type (type_horizontal_standard_variable),parameter :: partial_pressure_of_n2o = type_horizontal_standard_variable(name='partial_pressure_of_n2o',units='natm')
    type (type_horizontal_standard_variable),parameter :: sediment_erosion = type_horizontal_standard_variable(name='sediment_erosion',units='m/d')
+   type (type_horizontal_standard_variable),parameter :: sediment_type = type_horizontal_standard_variable(name='sediment_type',units='-')
 
    ! Aggregate absorption and backscatter.
    type (type_bulk_standard_variable),parameter :: particulate_organic_absorption_coefficient = type_bulk_standard_variable(name='particulate_organic_absorption_coefficient',units='1/m',aggregate_variable=.true.)

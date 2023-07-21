@@ -30,6 +30,8 @@ module ersem_model_library
    use ersem_benthic_erosion
    use ersem_fluff
    use ersem_zenith_angle
+   use ersem_mms_fauna
+   use ersem_trawler
 
    implicit none
 
@@ -83,6 +85,9 @@ contains
          case ('benthic_erosion');                         allocate(type_ersem_benthic_erosion::model)
          case ('fluff');                                   allocate(type_ersem_fluff::model)
          case ('zenith_angle');                            allocate(type_ersem_zenith_angle::model)
+         case ('mms_fauna');                               allocate(type_ersem_mms_fauna::model)
+         case ('trawler');                                 allocate(type_ersem_trawler::model)
+
          ! Add new models here
          case default
             call self%type_base_model_factory%create(name,model)
