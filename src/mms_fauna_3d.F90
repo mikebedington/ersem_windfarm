@@ -27,13 +27,13 @@ module ersem_mms_fauna
 
    type,extends(type_ersem_pelagic_base),public :: type_ersem_mms_fauna
       type (type_state_variable_id)   :: id_O2o
-      type (type_state_variable_id)   :: id_RPc,id_RPn,id_RPp,id_RPs
+      type (type_state_variable_id)   :: id_RPc,id_RPn,id_RPp,id_RPs, id_acf
       type (type_state_variable_id)   :: id_N1p,id_N4n,id_O3c,id_TA
       type (type_diagnostic_variable_id) :: id_fYO3c,id_fYN4n,id_fYN1p,id_fYRPc,id_fYRPn,id_fYRPp
       type (type_food), allocatable :: food(:)
       type (type_dependency_id) :: id_ETW,id_dz
       integer  :: nfood
-      real(rk) :: acf,decomm
+      !real(rk) :: acf
       real(rk) :: qnc,qpc
       real(rk) :: hO2,rlO2
       real(rk) :: xcl,xcs,xch
@@ -63,7 +63,7 @@ contains
       call self%initialize_ersem_base(sedimentation=.false.)
 
       ! Register parameters
-      call self%get_parameter(self%acf, 'acf', 'm', 'volume of cell per substrate area, or area of cell per circumference of substrate')
+      !call self%get_parameter(acf, 'acf', 'm', 'volume of cell per substrate area, or area of cell per circumference of substrate')
       call self%get_parameter(self%qnc,  'qnc',  'mmol N/mg C','nitrogen to carbon ratio')
       call self%get_parameter(self%qpc,  'qpc',  'mmol P/mg C','phosphorus to carbon ratio')
       call self%get_parameter(c0,        'c0',   'mg C/m^2',   'background concentration',default=0.0_rk)
@@ -85,12 +85,13 @@ contains
       call self%get_parameter(self%xdc,  'xdc',  '1/degree_C', 'e-folding temperature factor of cold mortality response')
       call self%get_parameter(self%sr,   'sr',   '1/d',        'specific rest respiration at reference temperature')
       call self%get_parameter(self%pur,  'pur',  '-',          'fraction of assimilated food that is respired')
-      call self%get_parameter(self%decomm, 'decomm','m',       'depth of structure cut-off')
 
       ! Add carbon pool as our only state variable.
       call self%add_constituent('c',3000._rk,c0,qn=self%qnc,qp=self%qpc)
+      call self%register_state_variable(self%id_acf,'acf','m','Area of cell/circumference of installation')
 
       call self%set_variable_property(self%id_c, 'disable_transport', .true.)
+      call self%set_variable_property(self%id_acf, 'disable_transport', .true.)
 
       ! Environmental dependencies
       call self%register_dependency(self%id_ETW,standard_variables%temperature)
@@ -193,9 +194,9 @@ contains
       class (type_ersem_mms_fauna),intent(in) :: self
       _DECLARE_ARGUMENTS_DO_
 
-      real(rk) :: c,cP,O2o,foodP,Dm
+      real(rk) :: c,cP,O2o,foodP,Dm,acf,acf_inv
       real(rk) :: eT,eO,eC,ETW,crowding_c,x,dz
-      real(rk) :: rate, depth, acf, acf_inv
+      real(rk) :: rate
       real(rk) :: SYc,SYn,SYp
       real(rk),dimension(self%nfood) :: foodcP,foodnP,foodpP,foodsP,foodcP_an
       real(rk),dimension(self%nfood) :: feed, sflux, prefcorr
@@ -207,66 +208,46 @@ contains
       real(rk) :: fBTYc,nfBTYc,fYO3c,p_an
       real(rk) :: excess_c,excess_n,excess_p
 
-      ! Here we replace a standard loop with a downward loop,
-      ! as we need to retain information about depth to enable partial
-      ! decommissioning scenario (see "decomm" below)
+      _LOOP_BEGIN_
 
-       depth = 0._rk
-      _DOWNWARD_LOOP_BEGIN_
+      _GET_(self%id_acf,acf)
 
-         _GET_(self%id_dz,dz)
-         depth = depth + dz
+      if (acf>0._rk) then
+        _GET_WITH_BACKGROUND_(self%id_c,c)
+        _GET_(self%id_c,cP)
+        acf_inv = 1._rk/acf
+      else
+        c = 0._rk
+        cP = 0._rk
+        acf_inv = 0._rk
+      end if      
 
-   !   _LOOP_BEGIN_
-
-      _GET_WITH_BACKGROUND_(self%id_c,c)
-      _GET_(self%id_c,cP)
-
- !     print *,cP
-
- !     _GET_HORIZONTAL_(self%id_Dm,Dm)
       _GET_(self%id_O2o,O2o)
 
       _GET_(self%id_ETW,ETW)
       _GET_(self%id_dz,dz)
-
+   
       ! DREAMS: convert incoming fauna carbon from units per volume to units per area (mmol/m3 to mmol/m2)
       ! To be substituted with cell volume per mms substrate area (m3/m2 -> m)
  
-      !GL c =  cP *  self%acf + 0.001_rk
-      !GL cP = cP * self%acf
+      !c = c * acf
+      !cP = cP * acf
 
-      !Allow for partial decommissioning.
-      !In this case structures extend from certain depth ("decomm") downward. If depth is
-      !shallower that decomm, set acf to zero (no structures).
-      !Decomm = 0 means structure extends throughout water column
-
-      if (depth > self%decomm) then
-             acf = self%acf
-      else
-             acf = 0._rk
-      end if
-
-      ! Invert acf to avoid division by zero (brought over from three_d branch)
-      if (acf > 0._rk) then
-           acf_inv = 1._rk/acf
-      else
-           acf_inv = 0._rk
-      end if
-
+ !     print *,cP
+   
       ! Temperature limitation factor
       eT = max(0.0_rk,self%q10**((ETW-10._rk)/10._rk) - self%q10**((ETW-32._rk)/3._rk))
-
       ! Oxygen limitation factor
       if (O2o>self%rlO2) then
          eO = (O2o-self%rlO2)**3/((O2o-self%rlO2)**3+(self%hO2-self%rlO2)**3)
       else
          eO = 0.0_rk
       end if
+
       ! Limitation factor describing a decrease in feeding rate due to overcrowding.
       ! To disable any effect of overcrowding on feeding, set parameter xcl to a very large value.
       ! This can for instance be done to disable the overcrowding effect for meiobenthos/Y4, as in SSB-ERSEM.
-     crowding_c = c - self%xcl
+      crowding_c = c - self%xcl
       if (crowding_c>0._rk) then
          x = crowding_c * crowding_c/(crowding_c+self%xcs)
          eC = 1._rk - x/(x+self%xch)
@@ -274,15 +255,9 @@ contains
          eC = 1._rk
       end if
 
-      ! Only allow growth if substrate (i.e. structure) is available (likely not needed in 3D with spatially resolved initialization, but needed in 1D)
-
-      if (acf > 0.) then
       ! Calculate maximum ingestion rate (mg C/m2/d).
       ! This incorporates temperature, oxygen, crowding limitation factors.
       rate = self%su * c * eT * eO * eC
-      else
-      rate =0._rk
-      end if
 
       ! Get food concentrations: benthic and pelagic!
       do ifood=1,self%nfood
@@ -336,10 +311,10 @@ contains
       end if
 
       do ifood=1,self%nfood
-         _SET_DIAGNOSTIC_(self%food(ifood)%id_fc,sflux(ifood)*foodcP(ifood))!GL / self%acf)
-         _SET_DIAGNOSTIC_(self%food(ifood)%id_fn,sflux(ifood)*foodnP(ifood) !GL / self%acf)
-         _SET_DIAGNOSTIC_(self%food(ifood)%id_fp,sflux(ifood)*foodpP(ifood) !GL / self%acf)
-         _SET_DIAGNOSTIC_(self%food(ifood)%id_fs,sflux(ifood)*foodsP(ifood) !GL / self%acf)
+         _SET_DIAGNOSTIC_(self%food(ifood)%id_fc,sflux(ifood)*foodcP(ifood)) !* acf_inv)
+         _SET_DIAGNOSTIC_(self%food(ifood)%id_fn,sflux(ifood)*foodnP(ifood)) !* acf_inv)
+         _SET_DIAGNOSTIC_(self%food(ifood)%id_fp,sflux(ifood)*foodpP(ifood)) !* acf_inv)
+         _SET_DIAGNOSTIC_(self%food(ifood)%id_fs,sflux(ifood)*foodsP(ifood)) !* acf_inv)
       end do
 
       ! Ingestion (matter/m2/d) per food source.
@@ -389,9 +364,9 @@ contains
       ! Store carbon flux resulting from respiration for later use (note: respiration does not affect nitrogen, phosphorus).
       ! Also account for its production of benthic CO2 and consumption of benthic oxygen.
       SYc = SYc - fYO3c
-      _SET_ODE_(self%id_O3c, fYO3c/CMass * acf_inv)                          ! DREAMS scaling back to per volume
-      _SET_ODE_(self%id_O2o,-fYO3c/CMass * acf_inv)                          ! DREAMS scaling back to per volume
-      _SET_DIAGNOSTIC_(self%id_fYO3c,fYO3c) !GL / self%acf)                        ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_O3c, (fYO3c/CMass)*acf_inv)                          ! DREAMS scaling back to per volume
+      _SET_ODE_(self%id_O2o,-(fYO3c/CMass)*acf_inv)                          ! DREAMS scaling back to per volume
+      _SET_DIAGNOSTIC_(self%id_fYO3c,fYO3c)!*acf_inv)                        ! DREAMS scaiing back to per volume
 
       ! Specific mortality (1/d): background mortality + mortality due to oxygen limitation + mortality due to cold.
       mort_act  = self%sd * eT
@@ -401,27 +376,20 @@ contains
       ! Total specific mortality (1/d)
       mortflux = mort_act + mort_ox + mort_cold
 
-      ! Another "hack" for 1D, or when mms_fauna is present where there is no structure,
-      ! to kill it off quickly increase mortality term 100 times.
-
-      if (acf == 0._rk) then
-            mortflux = 100_rk * mortflux
-      end if
-
       ! Apply mortality to biomass, and send dead matter to particulate organic carbon pool.
-      _SET_ODE_(self%id_c, -mortflux*cP ) !GL / self%acf)                     ! DREAMS scaling back to per volume
-      _SET_ODE_(self%id_RPc,mortflux*cP * acf_inv)                     ! DREAMS scaiing back to per volume
-      _SET_ODE_(self%id_RPn,mortflux*cP*self%qnc * acf_inv)            ! DREAMS scaiing back to per volume
-      _SET_ODE_(self%id_RPp,mortflux*cP*self%qpc * acf_inv)            ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_c, -mortflux*cP ) !*acf_inv)                     ! DREAMS scaling back to per volume
+      _SET_ODE_(self%id_RPc,mortflux*cP*acf_inv)                     ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_RPn,mortflux*cP*self%qnc*acf_inv)            ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_RPp,mortflux*cP*self%qpc*acf_inv)            ! DREAMS scaiing back to per volume
 
       ! Compute excess carbon flux, given that the maximum realizable carbon flux needs to be balanced
       ! by corresponding nitrogen and phosphorus fluxes to maintain constant stoichiometry.
       excess_c = max(max(SYc - SYp/self%qpc, SYc - SYn/self%qnc), 0.0_rk)
       SYc = SYc - excess_c
    
-      _SET_ODE_(self%id_c,SYc ) !GL / self%acf)                               ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_c,SYc) !*acf_inv)                               ! DREAMS scaiing back to per volume
 
-      _SET_ODE_(self%id_RPc,excess_c * acf_inv)                        ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_RPc,excess_c*acf_inv)                        ! DREAMS scaiing back to per volume
 
       ! Compute excess nitrogen and phosphorus fluxes, based on final carbon flux.
       ! Excess nutrient will be exudated to preserve constant stoichiometry of biomass.
@@ -438,23 +406,23 @@ contains
      !p_an = sum(foodcP_an/(foodcP+1.e-15_rk)*grossfluxc)/max(fBTYc,1.e-8_rk)
 
       ! Send excess nutrients to phosphate, ammonium pools.
-      _SET_ODE_(self%id_N4n, excess_n * acf_inv)                            ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_N4n, excess_n*acf_inv)                            ! DREAMS scaiing back to per volume
       !_SET_BOTTOM_ODE_(self%id_K4n2,p_an       *excess_n)
-      _SET_ODE_(self%id_N1p, excess_p * acf_inv)                            ! DREAMS scaiing back to per volume
+      _SET_ODE_(self%id_N1p, excess_p*acf_inv)                            ! DREAMS scaiing back to per volume
       !_SET_BOTTOM_ODE_(self%id_K1p2,p_an       *excess_p)
 
-      _SET_DIAGNOSTIC_(self%id_fYN4n,excess_n) !GL  / self%acf)                    ! DREAMS scaiing back to per volume - not necessary
-      _SET_DIAGNOSTIC_(self%id_fYN1p,excess_p) !GL / self%acf)                    ! DREAMS scaiing back to per volume - not necessary
-      _SET_DIAGNOSTIC_(self%id_fYRPc,(mortflux*cP+excess_c)) !GL / self%acf)      ! DREAMS scaiing back to per volume - not necessary
-      _SET_DIAGNOSTIC_(self%id_fYRPn,(mortflux*cP*self%qnc)) !GL / self%acf)      ! DREAMS scaiing back to per volume - not necessary
-      _SET_DIAGNOSTIC_(self%id_fYRPp,(mortflux*cP*self%qpc)) !GL / self%acf)      ! DREAMS scaiing back to per volume - not necessary
+      _SET_DIAGNOSTIC_(self%id_fYN4n,excess_n) !*acf_inv)                    ! DREAMS scaiing back to per volume - not necessary
+      _SET_DIAGNOSTIC_(self%id_fYN1p,excess_p) !*acf_inv)                    ! DREAMS scaiing back to per volume - not necessary
+      _SET_DIAGNOSTIC_(self%id_fYRPc,(mortflux*cP+excess_c)) !*acf_inv)      ! DREAMS scaiing back to per volume - not necessary
+      _SET_DIAGNOSTIC_(self%id_fYRPn,(mortflux*cP*self%qnc)) !*acf_inv)      ! DREAMS scaiing back to per volume - not necessary
+      _SET_DIAGNOSTIC_(self%id_fYRPp,(mortflux*cP*self%qpc)) !*acf_inv)      ! DREAMS scaiing back to per volume - not necessary
 
       if (.not.legacy_ersem_compatibility) then
          ! Alkalinity contributions: +1 for NH4, -1 for PO4
-         _SET_ODE_(self%id_TA,(excess_n-excess_p) * acf_inv)                ! DREAMS scaiing back to per volume
+         _SET_ODE_(self%id_TA,(excess_n-excess_p)*acf_inv)                ! DREAMS scaiing back to per volume
       end if
 
-      _DOWNWARD_LOOP_END_
+      _LOOP_END_
 
    end subroutine do
 
